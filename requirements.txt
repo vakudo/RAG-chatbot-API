@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic-settings
+openai
+langchain
+langchain-ollama
+langchain-postgres
+langchain-text-splitters
+psycopg[binary]
+pymupdf
+streamlit
+requests

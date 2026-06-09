@@ -1,0 +1,6 @@
+The Aurora Project is an internal initiative started in March 2024.
+Its goal is to reduce data pipeline latency from 45 minutes to under 5 minutes.
+The project lead is Maria Chen, and the team consists of 6 engineers.
+The chosen technology stack includes Apache Kafka, Flink, and ClickHouse.
+The first milestone, real-time ingestion, was completed in June 2024.
+The total budget allocated for the Aurora Project is 1.2 million dollars.
