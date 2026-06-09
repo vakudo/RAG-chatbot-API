@@ -79,12 +79,12 @@ curl -X POST http://localhost:8000/upload -F "file=@sample.txt"
 
 ### `POST /chat`
 
-Ask a question about your documents. The response is a `text/event-stream` (SSE). If `doc_id` is omitted, search runs across all documents. `history` holds previous messages (the last 6 are used).
+Ask a question about your documents. The response is a `text/event-stream` (SSE). If `doc_id` is omitted, search runs across all documents. `history` holds previous messages (the last 6 are used). Optional `model` overrides the default LLM for this request.
 
 ```bash
 curl -N -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
-  -d '{"question": "What is the project budget?", "doc_id": null, "history": []}'
+  -d '{"question": "What is the project budget?", "doc_id": null, "history": [], "model": null}'
 ```
 
 ```
@@ -102,6 +102,37 @@ List all ingested documents:
 
 ```json
 [{ "doc_id": "321bba78-...", "filename": "sample.txt", "chunks_count": 1 }]
+```
+
+### `GET /models`
+
+A curated catalog of chat models (plus anything else you have pulled into Ollama), each marked as installed or not. The Streamlit UI uses this to populate the model picker in the sidebar.
+
+```json
+{
+  "models": [
+    { "name": "llama3.2", "size": "2.0 GB", "description": "Meta Llama 3.2 3B", "installed": true },
+    { "name": "qwen2.5:7b", "size": "4.7 GB", "description": "Qwen 2.5 7B, best quality", "installed": false }
+  ],
+  "default": "llama3.2"
+}
+```
+
+### `POST /models/pull`
+
+Download a model into Ollama. Streams pull progress as NDJSON (proxied from Ollama), so the UI can render a live progress bar. In the Streamlit sidebar, picking a model that is not installed shows a **Download** button that calls this endpoint.
+
+```bash
+curl -N -X POST http://localhost:8000/models/pull \
+  -H "Content-Type: application/json" \
+  -d '{"model": "qwen2.5:3b"}'
+```
+
+```
+{"status":"pulling manifest"}
+{"status":"pulling c5396e06af29","total":397807936,"completed":131072000}
+...
+{"status":"success"}
 ```
 
 ## Configuration (`.env`)

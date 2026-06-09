@@ -32,7 +32,10 @@ def get_client() -> AsyncOpenAI:
 
 
 async def stream_answer(
-    question: str, doc_id: str | None, history: list[dict]
+    question: str,
+    doc_id: str | None,
+    history: list[dict],
+    model: str | None = None,
 ) -> AsyncIterator[str]:
     docs = await asyncio.to_thread(retrieve, question, doc_id)
     context = "\n\n---\n\n".join(d.page_content for d in docs)
@@ -46,7 +49,7 @@ async def stream_answer(
     )
 
     stream = await get_client().chat.completions.create(
-        model=settings.llm_model, messages=messages, stream=True
+        model=model or settings.llm_model, messages=messages, stream=True
     )
     async for chunk in stream:
         delta = chunk.choices[0].delta.content if chunk.choices else None

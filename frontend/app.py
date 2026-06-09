@@ -42,6 +42,59 @@ with st.sidebar:
     choice = st.selectbox("Chat with", list(options))
     doc_id = options[choice]
 
+    st.header("Model")
+    model = None
+    try:
+        models_info = requests.get(f"{BACKEND}/models", timeout=30).json()
+        entries = models_info["models"]
+        labels = []
+        for m in entries:
+            mark = "✅" if m["installed"] else "⬇️"
+            size = f" · {m['size']}" if m["size"] else ""
+            desc = f" — {m['description']}" if m["description"] else ""
+            labels.append(f"{mark} {m['name']}{size}{desc}")
+        default_index = next(
+            (i for i, m in enumerate(entries) if m["name"] == models_info["default"]),
+            0,
+        )
+        selected = entries[labels.index(st.selectbox("LLM", labels, index=default_index))]
+
+        if selected["installed"]:
+            model = selected["name"]
+        else:
+            st.info(f"Model **{selected['name']}** is not downloaded ({selected['size']}).")
+            if st.button(f"Download {selected['name']}", use_container_width=True):
+                progress = st.progress(0.0, text="Starting download...")
+                error = None
+                with requests.post(
+                    f"{BACKEND}/models/pull",
+                    json={"model": selected["name"]},
+                    stream=True,
+                    timeout=None,
+                ) as resp:
+                    for line in resp.iter_lines(decode_unicode=True):
+                        if not line:
+                            continue
+                        data = json.loads(line)
+                        if "error" in data:
+                            error = data["error"]
+                            break
+                        total, done = data.get("total"), data.get("completed")
+                        if total and done:
+                            progress.progress(
+                                min(done / total, 1.0),
+                                text=f"{data.get('status', '')} — {done / total:.0%}",
+                            )
+                        else:
+                            progress.progress(0.0, text=data.get("status", "..."))
+                if error:
+                    st.error(f"Download failed: {error}")
+                else:
+                    progress.progress(1.0, text="Done!")
+                    st.rerun()
+    except (requests.RequestException, KeyError, ValueError):
+        st.warning("Could not load model list, using backend default")
+
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
@@ -58,6 +111,7 @@ if question := st.chat_input("Ask a question about your documents"):
                 "question": question,
                 "doc_id": doc_id,
                 "history": st.session_state.messages[:-1],
+                "model": model,
             },
             stream=True,
             timeout=300,
