@@ -20,7 +20,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-ALLOWED_EXTENSIONS = {".pdf", ".txt"}
+ALLOWED_EXTENSIONS = {".pdf", ".txt", ".xlsx", ".xlsm"}
 
 
 class Message(BaseModel):
@@ -40,7 +40,7 @@ def upload(file: UploadFile = File(...)):
     filename = file.filename or "upload"
     suffix = Path(filename).suffix.lower()
     if suffix not in ALLOWED_EXTENSIONS:
-        raise HTTPException(400, "Only PDF and TXT files are supported")
+        raise HTTPException(400, "Only PDF, TXT and Excel files are supported")
 
     uploads = Path(settings.uploads_path)
     uploads.mkdir(parents=True, exist_ok=True)

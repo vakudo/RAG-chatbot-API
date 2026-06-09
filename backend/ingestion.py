@@ -4,6 +4,7 @@ from pathlib import Path
 
 import fitz
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from openpyxl import load_workbook
 
 from backend.config import settings
 from backend.retriever import get_vectorstore
@@ -26,10 +27,39 @@ def _save_index(index: dict) -> None:
     _index_path().write_text(json.dumps(index, indent=2), encoding="utf-8")
 
 
+def _extract_xlsx(path: Path) -> str:
+    # Rows become "header: value" lines so each chunk stays self-describing
+    # after splitting, which keeps similarity search meaningful.
+    wb = load_workbook(path, read_only=True, data_only=True)
+    try:
+        sheets = []
+        for ws in wb.worksheets:
+            header = None
+            lines = [f"Sheet: {ws.title}"]
+            for row in ws.iter_rows(values_only=True):
+                cells = ["" if c is None else str(c).strip() for c in row]
+                if not any(cells):
+                    continue
+                if header is None:
+                    header = cells
+                    continue
+                pairs = [f"{h}: {v}" for h, v in zip(header, cells) if v and h]
+                if pairs:
+                    lines.append("; ".join(pairs))
+            if len(lines) > 1:
+                sheets.append("\n".join(lines))
+        return "\n\n".join(sheets)
+    finally:
+        wb.close()
+
+
 def extract_text(path: Path) -> str:
-    if path.suffix.lower() == ".pdf":
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
         with fitz.open(path) as doc:
             return "\n".join(page.get_text() for page in doc)
+    if suffix in {".xlsx", ".xlsm"}:
+        return _extract_xlsx(path)
     return path.read_text(encoding="utf-8", errors="ignore")
 
 

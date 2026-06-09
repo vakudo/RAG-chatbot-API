@@ -113,11 +113,11 @@ onMounted(refresh)
           <input
             ref="fileInput"
             type="file"
-            accept=".pdf,.txt"
+            accept=".pdf,.txt,.xlsx,.xlsm"
             :disabled="uploading"
             @change="onUpload"
           />
-          {{ uploading ? 'Ingesting…' : '＋ Upload PDF or TXT' }}
+          {{ uploading ? 'Ingesting…' : '＋ Upload PDF, TXT or Excel' }}
         </label>
         <p v-if="uploadMessage" class="ok">{{ uploadMessage }}</p>
         <p v-if="uploadError" class="warn">{{ uploadError }}</p>

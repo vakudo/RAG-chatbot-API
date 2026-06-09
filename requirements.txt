@@ -10,3 +10,4 @@ langchain-postgres
 langchain-text-splitters
 psycopg[binary]
 pymupdf
+openpyxl

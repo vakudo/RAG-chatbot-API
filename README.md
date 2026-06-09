@@ -1,6 +1,6 @@
 # RAG Chatbot API
 
-Chat with your documents (RAG): upload PDF/TXT files, ask questions, and get answers grounded strictly in the document content, streamed in real time.
+Chat with your documents (RAG): upload PDF, TXT or Excel files, ask questions, and get answers grounded strictly in the document content, streamed in real time.
 
 Runs **fully free and local**: LLM and embeddings via [Ollama](https://ollama.com), vector store via Postgres + [pgvector](https://github.com/pgvector/pgvector).
 
@@ -10,7 +10,7 @@ Runs **fully free and local**: LLM and embeddings via [Ollama](https://ollama.co
 - **Ollama** — `llama3.2` (chat) and `nomic-embed-text` (embeddings), local, no API keys
 - **LangChain** + `langchain-postgres` — RAG pipeline and vector store integration
 - **Postgres + pgvector** — vector storage and similarity search (in Docker)
-- **PyMuPDF** — PDF parsing
+- **PyMuPDF** — PDF parsing; **openpyxl** — Excel parsing
 - **Vue 3 + Vite** — web UI with streaming chat and a model gallery
 
 ## Project structure
@@ -65,7 +65,7 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5173** — upload a PDF or TXT in the sidebar, pick a model, and ask questions in the chat.
+Open **http://localhost:5173** — upload a PDF, TXT or Excel file in the sidebar, pick a model, and ask questions in the chat.
 
 Swagger API docs: http://localhost:8000/docs
 
@@ -75,7 +75,7 @@ Swagger API docs: http://localhost:8000/docs
 
 ### `POST /upload`
 
-Upload a document (multipart/form-data, `file` field, PDF or TXT). The file is saved to `uploads/`, split into chunks (1000 chars, 200 overlap), embedded, and stored in pgvector.
+Upload a document (multipart/form-data, `file` field; PDF, TXT, XLSX or XLSM). The file is saved to `uploads/`, split into chunks (1000 chars, 200 overlap), embedded, and stored in pgvector. Excel sheets are flattened into `header: value` lines per row, so chunks stay self-describing for similarity search.
 
 ```bash
 curl -X POST http://localhost:8000/upload -F "file=@sample.txt"
@@ -167,5 +167,5 @@ Starts Postgres and the API (port 8000). Ollama must be running on the host — 
 
 ## How it works
 
-1. **Ingestion**: PDF/TXT → text (PyMuPDF) → chunks (`RecursiveCharacterTextSplitter`) → embeddings (Ollama) → pgvector. Each chunk carries metadata: `doc_id`, `filename`, `chunk_index`. The document registry lives in `uploads/index.json`.
+1. **Ingestion**: PDF/TXT/Excel → text (PyMuPDF for PDF, openpyxl for Excel) → chunks (`RecursiveCharacterTextSplitter`) → embeddings (Ollama) → pgvector. Each chunk carries metadata: `doc_id`, `filename`, `chunk_index`. The document registry lives in `uploads/index.json`.
 2. **Chat**: the question is embedded → top-5 similar chunks fetched from pgvector (filtered by `doc_id` if provided) → system prompt with context + last 6 history messages + question → answer streamed from `llama3.2` via Ollama's OpenAI-compatible API.
