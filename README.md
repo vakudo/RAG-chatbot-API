@@ -11,7 +11,7 @@ Runs **fully free and local**: LLM and embeddings via [Ollama](https://ollama.co
 - **LangChain** + `langchain-postgres` — RAG pipeline and vector store integration
 - **Postgres + pgvector** — vector storage and similarity search (in Docker)
 - **PyMuPDF** — PDF parsing
-- **Streamlit** — minimal web UI
+- **Vue 3 + Vite** — web UI with streaming chat and a model gallery
 
 ## Project structure
 
@@ -22,8 +22,14 @@ Runs **fully free and local**: LLM and embeddings via [Ollama](https://ollama.co
 │   ├── retriever.py     # similarity search (top-k, doc_id filter)
 │   ├── chat.py          # prompt building + streaming via Ollama
 │   └── config.py        # settings (pydantic-settings, .env)
-├── frontend/
-│   └── app.py           # Streamlit UI
+├── frontend/            # Vue 3 + Vite app
+│   ├── index.html
+│   └── src/
+│       ├── App.vue              # layout: sidebar + chat
+│       ├── api.js               # backend client (SSE/NDJSON streaming)
+│       └── components/
+│           ├── ModelPicker.vue  # model cards with vendor logos + download
+│           └── ChatWindow.vue   # streaming chat
 ├── uploads/             # uploaded files + index.json (gitignored)
 ├── .env.example
 ├── Dockerfile
@@ -33,7 +39,7 @@ Runs **fully free and local**: LLM and embeddings via [Ollama](https://ollama.co
 
 ## Quick start
 
-Prerequisites: Python 3.12+, Docker Desktop, [Ollama](https://ollama.com/download).
+Prerequisites: Python 3.12+, Node.js 18+, Docker Desktop, [Ollama](https://ollama.com/download).
 
 ```powershell
 # 1. Dependencies
@@ -54,10 +60,12 @@ docker compose up -d db
 .\.venv\Scripts\uvicorn backend.main:app --reload
 
 # 6. Frontend (in a separate terminal)
-.\.venv\Scripts\streamlit run frontend\app.py
+cd frontend
+npm install
+npm run dev
 ```
 
-Open **http://localhost:8501** — upload a PDF or TXT in the sidebar, click **Ingest**, and ask questions in the chat.
+Open **http://localhost:5173** — upload a PDF or TXT in the sidebar, pick a model, and ask questions in the chat.
 
 Swagger API docs: http://localhost:8000/docs
 
@@ -106,7 +114,7 @@ List all ingested documents:
 
 ### `GET /models`
 
-A curated catalog of chat models (plus anything else you have pulled into Ollama), each marked as installed or not. The Streamlit UI uses this to populate the model picker in the sidebar.
+A curated catalog of chat models (plus anything else you have pulled into Ollama), each marked as installed or not. The UI renders this as a gallery of model cards with vendor logos.
 
 ```json
 {
@@ -120,7 +128,7 @@ A curated catalog of chat models (plus anything else you have pulled into Ollama
 
 ### `POST /models/pull`
 
-Download a model into Ollama. Streams pull progress as NDJSON (proxied from Ollama), so the UI can render a live progress bar. In the Streamlit sidebar, picking a model that is not installed shows a **Download** button that calls this endpoint.
+Download a model into Ollama. Streams pull progress as NDJSON (proxied from Ollama), so the UI can render a live progress bar. In the sidebar, model cards that are not installed show a **Download** button that calls this endpoint.
 
 ```bash
 curl -N -X POST http://localhost:8000/models/pull \

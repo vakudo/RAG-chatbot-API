@@ -68,14 +68,70 @@ async def chat(req: ChatRequest):
 
 # Curated catalog of chat models that run reasonably on a 16 GB CPU machine.
 MODEL_CATALOG = [
-    {"name": "llama3.2", "size": "2.0 GB", "description": "Meta Llama 3.2 3B"},
-    {"name": "llama3.2:1b", "size": "1.3 GB", "description": "Meta Llama 3.2 1B, fastest"},
-    {"name": "qwen2.5:0.5b", "size": "0.4 GB", "description": "Qwen 2.5 0.5B, tiny"},
-    {"name": "qwen2.5:3b", "size": "1.9 GB", "description": "Qwen 2.5 3B"},
-    {"name": "qwen2.5:7b", "size": "4.7 GB", "description": "Qwen 2.5 7B, best quality"},
-    {"name": "gemma2:2b", "size": "1.6 GB", "description": "Google Gemma 2 2B"},
-    {"name": "mistral", "size": "4.1 GB", "description": "Mistral 7B"},
-    {"name": "phi3.5", "size": "2.2 GB", "description": "Microsoft Phi 3.5 3.8B"},
+    {
+        "name": "llama3.2",
+        "display_name": "Llama 3.2 (3B)",
+        "vendor": "Meta",
+        "logo": "🦙",
+        "size": "2.0 GB",
+        "description": "Balanced quality and speed, good default",
+    },
+    {
+        "name": "llama3.2:1b",
+        "display_name": "Llama 3.2 (1B)",
+        "vendor": "Meta",
+        "logo": "🦙",
+        "size": "1.3 GB",
+        "description": "Fastest responses, simpler answers",
+    },
+    {
+        "name": "qwen2.5:0.5b",
+        "display_name": "Qwen 2.5 (0.5B)",
+        "vendor": "Alibaba",
+        "logo": "🐉",
+        "size": "0.4 GB",
+        "description": "Tiny and instant, for quick tests",
+    },
+    {
+        "name": "qwen2.5:3b",
+        "display_name": "Qwen 2.5 (3B)",
+        "vendor": "Alibaba",
+        "logo": "🐉",
+        "size": "1.9 GB",
+        "description": "Strong multilingual model",
+    },
+    {
+        "name": "qwen2.5:7b",
+        "display_name": "Qwen 2.5 (7B)",
+        "vendor": "Alibaba",
+        "logo": "🐉",
+        "size": "4.7 GB",
+        "description": "Best answer quality, slower on CPU",
+    },
+    {
+        "name": "gemma2:2b",
+        "display_name": "Gemma 2 (2B)",
+        "vendor": "Google",
+        "logo": "💎",
+        "size": "1.6 GB",
+        "description": "Compact and capable",
+    },
+    {
+        "name": "mistral",
+        "display_name": "Mistral (7B)",
+        "vendor": "Mistral AI",
+        "logo": "🌪️",
+        "size": "4.1 GB",
+        "description": "Popular all-rounder, slower on CPU",
+    },
+    {
+        "name": "phi3.5",
+        "display_name": "Phi 3.5 (3.8B)",
+        "vendor": "Microsoft",
+        "logo": "🪟",
+        "size": "2.2 GB",
+        "description": "Great reasoning for its size",
+    },
 ]
 
 
@@ -103,7 +159,15 @@ async def models():
     catalog_names = {m["name"] for m in MODEL_CATALOG}
     # models the user pulled themselves, outside the catalog
     extra = [
-        {"name": n, "size": "", "description": "", "installed": True}
+        {
+            "name": n,
+            "display_name": n,
+            "vendor": "Ollama",
+            "logo": "🤖",
+            "size": "",
+            "description": "",
+            "installed": True,
+        }
         for n in sorted(installed)
         if n not in catalog_names
         and not n.endswith(":latest")

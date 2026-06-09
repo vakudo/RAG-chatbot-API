@@ -10,5 +10,3 @@ langchain-postgres
 langchain-text-splitters
 psycopg[binary]
 pymupdf
-streamlit
-requests
