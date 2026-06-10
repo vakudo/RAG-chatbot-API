@@ -23,12 +23,72 @@ export async function uploadFile(file) {
   return resp.json()
 }
 
-/** Async generator over SSE `data:` payloads of POST /chat. */
-export async function* streamChat({ question, docId, history, model }) {
+export async function deleteDocument(docId) {
+  const resp = await fetch(`${API}/documents/${docId}`, { method: 'DELETE' })
+  if (!resp.ok) throw new Error(`DELETE /documents failed: ${resp.status}`)
+  return resp.json()
+}
+
+export async function uploadUrl(url) {
+  const resp = await fetch(`${API}/upload-url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  })
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}))
+    throw new Error(body.detail ?? `URL upload failed: ${resp.status}`)
+  }
+  return resp.json()
+}
+
+export async function listConversations() {
+  const resp = await fetch(`${API}/conversations`)
+  if (!resp.ok) throw new Error(`GET /conversations failed: ${resp.status}`)
+  return resp.json()
+}
+
+export async function createConversation() {
+  const resp = await fetch(`${API}/conversations`, { method: 'POST' })
+  if (!resp.ok) throw new Error(`POST /conversations failed: ${resp.status}`)
+  return resp.json()
+}
+
+export async function getConversationMessages(cid) {
+  const resp = await fetch(`${API}/conversations/${cid}/messages`)
+  if (!resp.ok) throw new Error(`GET messages failed: ${resp.status}`)
+  return resp.json()
+}
+
+export async function deleteConversation(cid) {
+  const resp = await fetch(`${API}/conversations/${cid}`, { method: 'DELETE' })
+  if (!resp.ok) throw new Error(`DELETE /conversations failed: ${resp.status}`)
+  return resp.json()
+}
+
+/**
+ * Async generator over SSE `data:` payloads of POST /chat.
+ * Yields `{ sources: [...] }` once, then `{ content: "..." }` chunks.
+ */
+export async function* streamChat({
+  question,
+  docIds,
+  history,
+  model,
+  conversationId,
+  signal,
+}) {
   const resp = await fetch(`${API}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, doc_id: docId, history, model }),
+    body: JSON.stringify({
+      question,
+      doc_ids: docIds,
+      history,
+      model,
+      conversation_id: conversationId,
+    }),
+    signal,
   })
   if (!resp.ok) throw new Error(`POST /chat failed: ${resp.status}`)
 
@@ -46,7 +106,7 @@ export async function* streamChat({ question, docId, history, model }) {
       if (!line.startsWith('data:')) continue
       const payload = line.slice(5).trim()
       if (payload === '[DONE]') return
-      yield JSON.parse(payload).content
+      yield JSON.parse(payload)
     }
   }
 }

@@ -1,8 +1,10 @@
 # RAG Chatbot API
 
-Chat with your documents (RAG): upload PDF, TXT or Excel files, ask questions, and get answers grounded strictly in the document content, streamed in real time.
+Chat with your documents (RAG): upload PDF, DOCX, Excel, CSV, TXT, Markdown or HTML files (or paste a URL), ask questions, and get answers grounded strictly in the document content — streamed in real time, with source citations.
 
 Runs **fully free and local**: LLM and embeddings via [Ollama](https://ollama.com), vector store via Postgres + [pgvector](https://github.com/pgvector/pgvector).
+
+Features: hybrid retrieval (vector + full-text with RRF), follow-up question rewriting, multiple persistent conversations, multi-document filtering, model gallery with one-click downloads, Markdown answers, dark/light theme.
 
 ## Stack
 
@@ -65,6 +67,12 @@ npm install
 npm run dev
 ```
 
+Or, once dependencies are installed, start everything with one command:
+
+```powershell
+.\start.ps1
+```
+
 Open **http://localhost:5173** — upload a PDF, TXT or Excel file in the sidebar, pick a model, and ask questions in the chat.
 
 Swagger API docs: http://localhost:8000/docs
@@ -75,7 +83,7 @@ Swagger API docs: http://localhost:8000/docs
 
 ### `POST /upload`
 
-Upload a document (multipart/form-data, `file` field; PDF, TXT, XLSX or XLSM). The file is saved to `uploads/`, split into chunks (1000 chars, 200 overlap), embedded, and stored in pgvector. Excel sheets are flattened into `header: value` lines per row, so chunks stay self-describing for similarity search.
+Upload a document (multipart/form-data, `file` field; PDF, DOCX, XLSX/XLSM, CSV, TXT, MD, HTML). The file is saved to `uploads/`, split into chunks (1000 chars, 200 overlap), embedded, and stored in pgvector. Tabular formats (Excel, CSV, DOCX tables) are flattened into `header: value` lines per row, so chunks stay self-describing for similarity search.
 
 ```bash
 curl -X POST http://localhost:8000/upload -F "file=@sample.txt"
@@ -85,32 +93,51 @@ curl -X POST http://localhost:8000/upload -F "file=@sample.txt"
 { "doc_id": "321bba78-...", "filename": "sample.txt", "chunks_count": 1 }
 ```
 
+### `POST /upload-url`
+
+Ingest a page or file by URL: `{"url": "https://example.com/report.pdf"}`. The content type is detected automatically (PDF/HTML/text).
+
+### `GET /documents` · `DELETE /documents/{doc_id}`
+
+List all ingested documents, or delete one (removes its chunks from pgvector, the file from `uploads/`, and the registry entry).
+
+```json
+[{ "doc_id": "321bba78-...", "filename": "sample.txt", "chunks_count": 1 }]
+```
+
 ### `POST /chat`
 
-Ask a question about your documents. The response is a `text/event-stream` (SSE). If `doc_id` is omitted, search runs across all documents. `history` holds previous messages (the last 6 are used). Optional `model` overrides the default LLM for this request.
+Ask a question about your documents. The response is a `text/event-stream` (SSE): first an event with the retrieved sources, then the answer tokens.
 
 ```bash
 curl -N -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
-  -d '{"question": "What is the project budget?", "doc_id": null, "history": [], "model": null}'
+  -d '{"question": "What is the project budget?", "doc_ids": null, "history": [], "model": null, "conversation_id": null}'
 ```
 
 ```
+data: {"sources": [{"doc_id": "...", "filename": "sample.txt", "chunk_index": 0, "snippet": "..."}]}
 data: {"content": "The"}
 data: {"content": " budget"}
 ...
 data: [DONE]
 ```
 
+- `doc_ids` — restrict search to specific documents (omit for all)
+- `history` — previous messages; follow-up questions are rewritten into standalone search queries using it
+- `model` — override the default LLM for this request
+- `conversation_id` — persist the exchange into a conversation (see below)
+
 The model answers **only from the document content**; if the answer is not there, it says so explicitly.
 
-### `GET /documents`
+### Conversations
 
-List all ingested documents:
+- `GET /conversations` — list (newest first; titled by the first question)
+- `POST /conversations` — create
+- `GET /conversations/{id}/messages` — full message history with sources
+- `DELETE /conversations/{id}` — delete with messages
 
-```json
-[{ "doc_id": "321bba78-...", "filename": "sample.txt", "chunks_count": 1 }]
-```
+Stored in Postgres (`conversations` + `messages` tables, created automatically on startup).
 
 ### `GET /models`
 
@@ -167,5 +194,14 @@ Starts Postgres and the API (port 8000). Ollama must be running on the host — 
 
 ## How it works
 
-1. **Ingestion**: PDF/TXT/Excel → text (PyMuPDF for PDF, openpyxl for Excel) → chunks (`RecursiveCharacterTextSplitter`) → embeddings (Ollama) → pgvector. Each chunk carries metadata: `doc_id`, `filename`, `chunk_index`. The document registry lives in `uploads/index.json`.
-2. **Chat**: the question is embedded → top-5 similar chunks fetched from pgvector (filtered by `doc_id` if provided) → system prompt with context + last 6 history messages + question → answer streamed from `llama3.2` via Ollama's OpenAI-compatible API.
+1. **Ingestion**: document → text (PyMuPDF for PDF, openpyxl for Excel, python-docx for DOCX, BeautifulSoup for HTML) → chunks (`RecursiveCharacterTextSplitter`) → embeddings (Ollama) → pgvector. Each chunk carries metadata: `doc_id`, `filename`, `chunk_index`. The document registry lives in `uploads/index.json`.
+2. **Retrieval**: follow-up questions are first rewritten into standalone queries by the LLM. Then hybrid search runs: vector similarity (pgvector) + full-text (`tsvector`), merged with reciprocal rank fusion, top-5 win.
+3. **Chat**: system prompt with the retrieved context + last 6 history messages + question → answer streamed from the selected model via Ollama's OpenAI-compatible API. Sources (file, chunk, snippet) are sent to the client before the answer and rendered as chips under each reply.
+
+## Tests
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\
+```
+
+Covers text extraction for every format, the RRF merge logic, and API validation — no database or Ollama required.

@@ -1,4 +1,8 @@
+import asyncio
+import json
+import logging
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
@@ -7,11 +11,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from backend import conversations as convs
 from backend.chat import stream_answer
 from backend.config import settings
-from backend.ingestion import ingest_file, load_index
+from backend.ingestion import ingest_file, load_index, remove_document
 
-app = FastAPI(title="RAG Chatbot API")
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        await asyncio.to_thread(convs.init_db)
+    except Exception:
+        logger.exception("DB init failed; conversation persistence unavailable")
+    yield
+
+
+app = FastAPI(title="RAG Chatbot API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,7 +37,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-ALLOWED_EXTENSIONS = {".pdf", ".txt", ".xlsx", ".xlsm"}
+ALLOWED_EXTENSIONS = {
+    ".pdf", ".txt", ".md", ".csv", ".docx", ".xlsx", ".xlsm", ".html", ".htm",
+}
 
 
 class Message(BaseModel):
@@ -31,8 +50,10 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     question: str
     doc_id: str | None = None
+    doc_ids: list[str] | None = None
     history: list[Message] = []
     model: str | None = None
+    conversation_id: str | None = None
 
 
 @app.post("/upload")
@@ -40,7 +61,10 @@ def upload(file: UploadFile = File(...)):
     filename = file.filename or "upload"
     suffix = Path(filename).suffix.lower()
     if suffix not in ALLOWED_EXTENSIONS:
-        raise HTTPException(400, "Only PDF, TXT and Excel files are supported")
+        raise HTTPException(
+            400,
+            "Supported formats: PDF, TXT, MD, CSV, DOCX, XLSX, HTML",
+        )
 
     uploads = Path(settings.uploads_path)
     uploads.mkdir(parents=True, exist_ok=True)
@@ -60,10 +84,53 @@ def upload(file: UploadFile = File(...)):
 @app.post("/chat")
 async def chat(req: ChatRequest):
     history = [m.model_dump() for m in req.history]
-    return StreamingResponse(
-        stream_answer(req.question, req.doc_id, history, req.model),
-        media_type="text/event-stream",
-    )
+    doc_ids = req.doc_ids or ([req.doc_id] if req.doc_id else None)
+    cid = req.conversation_id
+    if cid and not await asyncio.to_thread(convs.conversation_exists, cid):
+        raise HTTPException(404, "Conversation not found")
+
+    async def sse():
+        if cid:
+            await asyncio.to_thread(convs.add_message, cid, "user", req.question)
+        answer_parts: list[str] = []
+        sources: list | None = None
+        async for event in stream_answer(req.question, doc_ids, history, req.model):
+            if "sources" in event:
+                sources = event["sources"]
+            if "content" in event:
+                answer_parts.append(event["content"])
+            yield f"data: {json.dumps(event)}\n\n"
+        yield "data: [DONE]\n\n"
+        if cid and answer_parts:
+            await asyncio.to_thread(
+                convs.add_message, cid, "assistant", "".join(answer_parts), sources
+            )
+
+    return StreamingResponse(sse(), media_type="text/event-stream")
+
+
+@app.get("/conversations")
+def conversations_list():
+    return convs.list_conversations()
+
+
+@app.post("/conversations")
+def conversations_create():
+    return convs.create_conversation()
+
+
+@app.get("/conversations/{cid}/messages")
+def conversation_messages(cid: str):
+    if not convs.conversation_exists(cid):
+        raise HTTPException(404, "Conversation not found")
+    return convs.get_messages(cid)
+
+
+@app.delete("/conversations/{cid}")
+def conversations_delete(cid: str):
+    if not convs.delete_conversation(cid):
+        raise HTTPException(404, "Conversation not found")
+    return {"deleted": cid}
 
 
 # Curated catalog of chat models that run reasonably on a 16 GB CPU machine.
@@ -201,3 +268,54 @@ def documents():
     return [
         {"doc_id": doc_id, **meta} for doc_id, meta in load_index().items()
     ]
+
+
+@app.delete("/documents/{doc_id}")
+def delete_document(doc_id: str):
+    if doc_id not in load_index():
+        raise HTTPException(404, "Document not found")
+    remove_document(doc_id)
+    return {"deleted": doc_id}
+
+
+class UrlRequest(BaseModel):
+    url: str
+
+
+@app.post("/upload-url")
+def upload_url(req: UrlRequest):
+    try:
+        resp = httpx.get(
+            req.url, follow_redirects=True, timeout=60,
+            headers={"User-Agent": "Mozilla/5.0 (RAG-chatbot)"},
+        )
+        resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise HTTPException(422, f"Could not fetch URL: {exc}")
+
+    from urllib.parse import unquote, urlparse
+
+    name = unquote(Path(urlparse(req.url).path).name) or "page"
+    ctype = resp.headers.get("content-type", "")
+    suffix = Path(name).suffix.lower()
+    if suffix not in ALLOWED_EXTENSIONS:
+        if "pdf" in ctype:
+            name += ".pdf"
+        elif "html" in ctype or "<html" in resp.text[:1000].lower():
+            name += ".html"
+        else:
+            name += ".txt"
+
+    uploads = Path(settings.uploads_path)
+    uploads.mkdir(parents=True, exist_ok=True)
+    doc_id = str(uuid.uuid4())
+    dest = uploads / f"{doc_id}_{name}"
+    dest.write_bytes(resp.content)
+
+    try:
+        chunks_count = ingest_file(dest, doc_id, name)
+    except ValueError as exc:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(422, str(exc))
+
+    return {"doc_id": doc_id, "filename": name, "chunks_count": chunks_count}

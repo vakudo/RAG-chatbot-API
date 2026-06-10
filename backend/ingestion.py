@@ -1,12 +1,16 @@
+import csv
 import json
 import threading
 from pathlib import Path
 
 import fitz
+from bs4 import BeautifulSoup
+from docx import Document as DocxDocument
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from openpyxl import load_workbook
 
 from backend.config import settings
+from backend.db import connect
 from backend.retriever import get_vectorstore
 
 _index_lock = threading.Lock()
@@ -53,6 +57,49 @@ def _extract_xlsx(path: Path) -> str:
         wb.close()
 
 
+def _extract_docx(path: Path) -> str:
+    doc = DocxDocument(path)
+    parts = [p.text for p in doc.paragraphs if p.text.strip()]
+    for table in doc.tables:
+        for row in table.rows:
+            cells = [c.text.strip() for c in row.cells if c.text.strip()]
+            if cells:
+                parts.append(" | ".join(cells))
+    return "\n".join(parts)
+
+
+def _extract_csv(path: Path) -> str:
+    # Same "header: value" flattening as Excel sheets.
+    with open(path, newline="", encoding="utf-8", errors="ignore") as f:
+        sample = f.read(4096)
+        f.seek(0)
+        try:
+            dialect = csv.Sniffer().sniff(sample)
+        except csv.Error:
+            dialect = csv.excel
+        rows = [r for r in csv.reader(f, dialect) if any(c.strip() for c in r)]
+    if not rows:
+        return ""
+    header, *data = rows
+    if not data:
+        return " | ".join(header)
+    lines = []
+    for row in data:
+        pairs = [f"{h}: {v}" for h, v in zip(header, row) if v.strip() and h.strip()]
+        if pairs:
+            lines.append("; ".join(pairs))
+    return "\n".join(lines)
+
+
+def _extract_html(path: Path) -> str:
+    soup = BeautifulSoup(
+        path.read_text(encoding="utf-8", errors="ignore"), "html.parser"
+    )
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+    return soup.get_text(separator="\n", strip=True)
+
+
 def extract_text(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix == ".pdf":
@@ -60,6 +107,13 @@ def extract_text(path: Path) -> str:
             return "\n".join(page.get_text() for page in doc)
     if suffix in {".xlsx", ".xlsm"}:
         return _extract_xlsx(path)
+    if suffix == ".docx":
+        return _extract_docx(path)
+    if suffix == ".csv":
+        return _extract_csv(path)
+    if suffix in {".html", ".htm"}:
+        return _extract_html(path)
+    # .txt, .md and anything else readable as plain text
     return path.read_text(encoding="utf-8", errors="ignore")
 
 
@@ -83,3 +137,17 @@ def ingest_file(path: Path, doc_id: str, filename: str) -> int:
         index[doc_id] = {"filename": filename, "chunks_count": len(chunks)}
         _save_index(index)
     return len(chunks)
+
+
+def remove_document(doc_id: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            "DELETE FROM langchain_pg_embedding WHERE cmetadata->>'doc_id' = %s",
+            (doc_id,),
+        )
+    for path in Path(settings.uploads_path).glob(f"{doc_id}_*"):
+        path.unlink(missing_ok=True)
+    with _index_lock:
+        index = load_index()
+        index.pop(doc_id, None)
+        _save_index(index)

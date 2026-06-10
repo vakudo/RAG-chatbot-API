@@ -1,6 +1,14 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { getDocuments, getModels, uploadFile } from './api'
+import {
+  deleteConversation,
+  deleteDocument,
+  getDocuments,
+  getModels,
+  listConversations,
+  uploadFile,
+  uploadUrl,
+} from './api'
 import { logoFor } from './logos'
 import ChatWindow from './components/ChatWindow.vue'
 import ModelPicker from './components/ModelPicker.vue'
@@ -21,26 +29,52 @@ watch(
 const modelMenuOpen = ref(false)
 
 const docs = ref([])
-const selectedDocId = ref(null)
+const selectedDocIds = ref([]) // empty = search across all documents
 const models = ref([])
 const selectedModel = ref(null)
 const backendDown = ref(false)
+
+const chats = ref([])
+const activeChatId = ref(null)
 
 const fileInput = ref(null)
 const uploading = ref(false)
 const uploadMessage = ref(null)
 const uploadError = ref(null)
 
-const docOptions = computed(() => [
-  { id: null, label: 'All documents' },
-  ...docs.value.map((d) => ({ id: d.doc_id, label: `${d.filename} (${d.chunks_count} chunks)` })),
-])
-
 const currentModel = computed(
   () => models.value.find((m) => m.name === selectedModel.value) ?? null,
 )
 
+async function refreshChats() {
+  try {
+    chats.value = await listConversations()
+  } catch {
+    chats.value = []
+  }
+}
+
+async function onNewChat() {
+  activeChatId.value = null
+}
+
+async function onDeleteChat(cid) {
+  try {
+    await deleteConversation(cid)
+    if (activeChatId.value === cid) activeChatId.value = null
+    await refreshChats()
+  } catch (e) {
+    uploadError.value = e.message
+  }
+}
+
+function onConversationCreated(cid) {
+  activeChatId.value = cid
+  refreshChats()
+}
+
 async function refresh() {
+  refreshChats()
   try {
     docs.value = await getDocuments()
     const info = await getModels()
@@ -67,11 +101,40 @@ async function onUpload() {
     uploadMessage.value = `Ingested ${result.filename} (${result.chunks_count} chunks)`
     fileInput.value.value = ''
     await refresh()
-    selectedDocId.value = result.doc_id
   } catch (e) {
     uploadError.value = e.message
   } finally {
     uploading.value = false
+  }
+}
+
+const urlInput = ref('')
+
+async function onUploadUrl() {
+  const url = urlInput.value.trim()
+  if (!url) return
+  uploading.value = true
+  uploadMessage.value = null
+  uploadError.value = null
+  try {
+    const result = await uploadUrl(url)
+    uploadMessage.value = `Ingested ${result.filename} (${result.chunks_count} chunks)`
+    urlInput.value = ''
+    await refresh()
+  } catch (e) {
+    uploadError.value = e.message
+  } finally {
+    uploading.value = false
+  }
+}
+
+async function onDeleteDoc(docId) {
+  try {
+    await deleteDocument(docId)
+    selectedDocIds.value = selectedDocIds.value.filter((id) => id !== docId)
+    await refresh()
+  } catch (e) {
+    uploadError.value = e.message
   }
 }
 
@@ -117,16 +180,57 @@ onMounted(refresh)
             :disabled="uploading"
             @change="onUpload"
           />
-          {{ uploading ? 'Ingesting…' : '＋ Upload PDF, TXT or Excel' }}
+          {{ uploading ? 'Ingesting…' : '＋ Upload PDF, DOCX, Excel, TXT…' }}
         </label>
+
+        <form class="url-form" @submit.prevent="onUploadUrl">
+          <input
+            v-model="urlInput"
+            type="url"
+            placeholder="…or paste a URL"
+            :disabled="uploading"
+          />
+          <button type="submit" :disabled="uploading || !urlInput.trim()">Add</button>
+        </form>
+
         <p v-if="uploadMessage" class="ok">{{ uploadMessage }}</p>
         <p v-if="uploadError" class="warn">{{ uploadError }}</p>
 
-        <select v-model="selectedDocId">
-          <option v-for="opt in docOptions" :key="opt.id ?? 'all'" :value="opt.id">
-            {{ opt.label }}
-          </option>
-        </select>
+        <p class="hint">
+          {{ selectedDocIds.length ? `Searching ${selectedDocIds.length} selected` : 'Searching all documents' }}
+        </p>
+
+        <ul v-if="docs.length" class="doc-list">
+          <li v-for="d in docs" :key="d.doc_id">
+            <label class="doc-check">
+              <input type="checkbox" :value="d.doc_id" v-model="selectedDocIds" />
+              <span class="doc-name" :title="d.filename">{{ d.filename }}</span>
+            </label>
+            <button class="doc-delete" title="Delete document" @click="onDeleteDoc(d.doc_id)">
+              🗑
+            </button>
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <div class="chats-header">
+          <h2>Chats</h2>
+          <button class="new-chat" @click="onNewChat">＋ New</button>
+        </div>
+        <ul class="chat-list">
+          <li
+            v-for="c in chats"
+            :key="c.id"
+            :class="{ active: c.id === activeChatId }"
+            @click="activeChatId = c.id"
+          >
+            <span class="doc-name" :title="c.title">{{ c.title }}</span>
+            <button class="doc-delete" title="Delete chat" @click.stop="onDeleteChat(c.id)">
+              🗑
+            </button>
+          </li>
+        </ul>
       </section>
 
       <section class="models">
@@ -151,7 +255,12 @@ onMounted(refresh)
     </aside>
 
     <main class="main">
-      <ChatWindow :doc-id="selectedDocId" :model="selectedModel" />
+      <ChatWindow
+        :doc-ids="selectedDocIds.length ? selectedDocIds : null"
+        :model="selectedModel"
+        :conversation-id="activeChatId"
+        @conversation-created="onConversationCreated"
+      />
     </main>
   </div>
 </template>
@@ -269,16 +378,151 @@ onMounted(refresh)
   display: none;
 }
 
-select {
-  width: 100%;
-  margin-top: 10px;
-  padding: 8px;
-  font: inherit;
-  font-size: 13px;
+.hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 10px 0 0;
+}
+
+.doc-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.doc-check input {
+  accent-color: var(--accent);
+}
+
+.chats-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.chats-header h2 {
+  margin: 0;
+}
+
+.new-chat {
+  font-size: 12px;
+  padding: 3px 10px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: none;
+  border-radius: 6px;
+}
+
+.new-chat:hover {
+  background: var(--accent-soft);
+}
+
+.chat-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.chat-list li:hover {
+  border-color: var(--accent);
+}
+
+.chat-list li.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.url-form {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.url-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  font-size: 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel);
   color: var(--text);
+  outline: none;
+}
+
+.url-form input:focus {
+  border-color: var(--accent);
+}
+
+.url-form button {
+  padding: 7px 12px;
+  font-size: 12px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: none;
+  border-radius: 8px;
+}
+
+.url-form button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.doc-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.doc-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.doc-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-delete {
+  background: none;
+  border: none;
+  padding: 0;
+  opacity: 0.6;
+}
+
+.doc-delete:hover {
+  opacity: 1;
 }
 
 .main {

@@ -11,3 +11,6 @@ langchain-text-splitters
 psycopg[binary]
 pymupdf
 openpyxl
+python-docx
+beautifulsoup4
+pytest
