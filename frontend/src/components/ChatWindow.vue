@@ -98,6 +98,9 @@ async function send() {
   } finally {
     busy.value = false
     controller = null
+    // the watcher has already skipped the self-initiated switch by now;
+    // re-opening this conversation later must load it from the server
+    selfCreatedCid = null
   }
 }
 </script>
