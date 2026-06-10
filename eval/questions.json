@@ -1,0 +1,26 @@
+[
+  {
+    "question": "What is the budget of the Aurora Project?",
+    "expected_keywords": ["1.2 million", "1,200,000", "1200000"]
+  },
+  {
+    "question": "Who is the lead of the Aurora Project?",
+    "expected_keywords": ["Maria Chen"]
+  },
+  {
+    "question": "What technology stack does the Aurora Project use?",
+    "expected_keywords": ["Kafka"]
+  },
+  {
+    "question": "What is the salary of Oleg Kuznetsov?",
+    "expected_keywords": ["135000", "135,000"]
+  },
+  {
+    "question": "What is the office address in Novosibirsk?",
+    "expected_keywords": ["Lenina 5"]
+  },
+  {
+    "question": "What is the capital of France?",
+    "expected_keywords": ["could not find"]
+  }
+]

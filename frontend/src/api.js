@@ -1,13 +1,22 @@
-export const API = 'http://localhost:8000'
+// dev: Vite on 5173 talks to the backend on 8000; production build is
+// served by FastAPI itself, so the API is same-origin
+export const API = import.meta.env.DEV ? 'http://localhost:8000' : ''
+
+function apiFetch(path, options = {}) {
+  const headers = { ...(options.headers ?? {}) }
+  const token = localStorage.getItem('api_token')
+  if (token) headers.Authorization = `Bearer ${token}`
+  return fetch(`${API}${path}`, { ...options, headers })
+}
 
 export async function getDocuments() {
-  const resp = await fetch(`${API}/documents`)
+  const resp = await apiFetch(`/documents`)
   if (!resp.ok) throw new Error(`GET /documents failed: ${resp.status}`)
   return resp.json()
 }
 
 export async function getModels() {
-  const resp = await fetch(`${API}/models`)
+  const resp = await apiFetch(`/models`)
   if (!resp.ok) throw new Error(`GET /models failed: ${resp.status}`)
   return resp.json()
 }
@@ -15,7 +24,7 @@ export async function getModels() {
 export async function uploadFile(file) {
   const form = new FormData()
   form.append('file', file)
-  const resp = await fetch(`${API}/upload`, { method: 'POST', body: form })
+  const resp = await apiFetch(`/upload`, { method: 'POST', body: form })
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}))
     throw new Error(body.detail ?? `Upload failed: ${resp.status}`)
@@ -24,13 +33,13 @@ export async function uploadFile(file) {
 }
 
 export async function deleteDocument(docId) {
-  const resp = await fetch(`${API}/documents/${docId}`, { method: 'DELETE' })
+  const resp = await apiFetch(`/documents/${docId}`, { method: 'DELETE' })
   if (!resp.ok) throw new Error(`DELETE /documents failed: ${resp.status}`)
   return resp.json()
 }
 
 export async function uploadUrl(url) {
-  const resp = await fetch(`${API}/upload-url`, {
+  const resp = await apiFetch(`/upload-url`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url }),
@@ -42,26 +51,56 @@ export async function uploadUrl(url) {
   return resp.json()
 }
 
+export async function getChunk(docId, chunkIndex) {
+  const resp = await apiFetch(`/chunks/${docId}/${chunkIndex}`)
+  if (!resp.ok) throw new Error(`GET /chunks failed: ${resp.status}`)
+  return resp.json()
+}
+
+export async function suggestQuestions(docId) {
+  const resp = await apiFetch(`/documents/${docId}/suggest`, { method: 'POST' })
+  if (!resp.ok) throw new Error(`POST /suggest failed: ${resp.status}`)
+  return resp.json()
+}
+
+export async function transcribeAudio(blob) {
+  const form = new FormData()
+  form.append('file', blob, 'voice.webm')
+  const resp = await apiFetch(`/transcribe`, { method: 'POST', body: form })
+  if (!resp.ok) throw new Error(`POST /transcribe failed: ${resp.status}`)
+  return resp.json()
+}
+
 export async function listConversations() {
-  const resp = await fetch(`${API}/conversations`)
+  const resp = await apiFetch(`/conversations`)
   if (!resp.ok) throw new Error(`GET /conversations failed: ${resp.status}`)
   return resp.json()
 }
 
 export async function createConversation() {
-  const resp = await fetch(`${API}/conversations`, { method: 'POST' })
+  const resp = await apiFetch(`/conversations`, { method: 'POST' })
   if (!resp.ok) throw new Error(`POST /conversations failed: ${resp.status}`)
   return resp.json()
 }
 
 export async function getConversationMessages(cid) {
-  const resp = await fetch(`${API}/conversations/${cid}/messages`)
+  const resp = await apiFetch(`/conversations/${cid}/messages`)
   if (!resp.ok) throw new Error(`GET messages failed: ${resp.status}`)
   return resp.json()
 }
 
+export async function renameConversation(cid, title) {
+  const resp = await apiFetch(`/conversations/${cid}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  })
+  if (!resp.ok) throw new Error(`PATCH /conversations failed: ${resp.status}`)
+  return resp.json()
+}
+
 export async function deleteConversation(cid) {
-  const resp = await fetch(`${API}/conversations/${cid}`, { method: 'DELETE' })
+  const resp = await apiFetch(`/conversations/${cid}`, { method: 'DELETE' })
   if (!resp.ok) throw new Error(`DELETE /conversations failed: ${resp.status}`)
   return resp.json()
 }
@@ -76,9 +115,10 @@ export async function* streamChat({
   history,
   model,
   conversationId,
+  saveQuestion = true,
   signal,
 }) {
-  const resp = await fetch(`${API}/chat`, {
+  const resp = await apiFetch(`/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -87,6 +127,7 @@ export async function* streamChat({
       history,
       model,
       conversation_id: conversationId,
+      save_question: saveQuestion,
     }),
     signal,
   })
@@ -113,7 +154,7 @@ export async function* streamChat({
 
 /** Async generator over NDJSON progress lines of POST /models/pull. */
 export async function* streamPull(model) {
-  const resp = await fetch(`${API}/models/pull`, {
+  const resp = await apiFetch(`/models/pull`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model }),

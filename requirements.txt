@@ -13,4 +13,7 @@ pymupdf
 openpyxl
 python-docx
 beautifulsoup4
+flashrank
+rapidocr-onnxruntime
+faster-whisper
 pytest

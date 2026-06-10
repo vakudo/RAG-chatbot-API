@@ -4,7 +4,7 @@ Chat with your documents (RAG): upload PDF, DOCX, Excel, CSV, TXT, Markdown or H
 
 Runs **fully free and local**: LLM and embeddings via [Ollama](https://ollama.com), vector store via Postgres + [pgvector](https://github.com/pgvector/pgvector).
 
-Features: hybrid retrieval (vector + full-text with RRF), follow-up question rewriting, multiple persistent conversations, multi-document filtering, model gallery with one-click downloads, Markdown answers, dark/light theme.
+Features: hybrid retrieval (vector + full-text with RRF) with local cross-encoder reranking, follow-up question rewriting, source citations with full-chunk viewer, suggested questions per document, OCR fallback for scanned PDFs, multiple persistent conversations (rename/search/export), multi-document filtering, batch upload and folder watching, model gallery with one-click downloads, Markdown answers, copy/regenerate, voice input, dark/light theme, optional token auth.
 
 ## Stack
 
@@ -135,9 +135,15 @@ The model answers **only from the document content**; if the answer is not there
 - `GET /conversations` — list (newest first; titled by the first question)
 - `POST /conversations` — create
 - `GET /conversations/{id}/messages` — full message history with sources
+- `PATCH /conversations/{id}` — rename (`{"title": "..."}`)
 - `DELETE /conversations/{id}` — delete with messages
 
 Stored in Postgres (`conversations` + `messages` tables, created automatically on startup).
+
+### More
+
+- `GET /chunks/{doc_id}/{chunk_index}` — full text of a retrieved chunk (used by the source viewer)
+- `POST /documents/{doc_id}/suggest` — LLM-generated starter questions for a document
 
 ### `GET /models`
 
@@ -181,6 +187,9 @@ curl -N -X POST http://localhost:8000/models/pull \
 | `CHUNK_OVERLAP` | `200` | chunk overlap |
 | `TOP_K` | `5` | number of chunks injected into context |
 | `PG_CONN` | `postgresql+psycopg://rag:rag@localhost:5432/rag` | Postgres connection string |
+| `RERANK` | `true` | rerank retrieved chunks with a local cross-encoder (flashrank) |
+| `WATCH_DIR` | _(empty)_ | folder to watch; new/changed files are ingested automatically |
+| `API_TOKEN` | _(empty)_ | when set, all API requests must send `Authorization: Bearer <token>` (in the UI, set it via DevTools: `localStorage.setItem('api_token', '...')`) |
 
 Want better answers? Pull a larger model: `ollama pull qwen2.5:7b` and set `LLM_MODEL=qwen2.5:7b` in `.env` (slower on CPU).
 
@@ -190,18 +199,19 @@ Want better answers? Pull a larger model: `ollama pull qwen2.5:7b` and set `LLM_
 docker compose up --build
 ```
 
-Starts Postgres and the API (port 8000). Ollama must be running on the host — the container reaches it via `host.docker.internal`. The frontend is started separately (step 6 above).
+Starts Postgres and the app (port 8000). The Docker image builds the Vue frontend and serves it from FastAPI, so **http://localhost:8000** is the full app — no separate frontend process. Ollama must be running on the host — the container reaches it via `host.docker.internal`.
 
 ## How it works
 
 1. **Ingestion**: document → text (PyMuPDF for PDF, openpyxl for Excel, python-docx for DOCX, BeautifulSoup for HTML) → chunks (`RecursiveCharacterTextSplitter`) → embeddings (Ollama) → pgvector. Each chunk carries metadata: `doc_id`, `filename`, `chunk_index`. The document registry lives in `uploads/index.json`.
-2. **Retrieval**: follow-up questions are first rewritten into standalone queries by the LLM. Then hybrid search runs: vector similarity (pgvector) + full-text (`tsvector`), merged with reciprocal rank fusion, top-5 win.
+2. **Retrieval**: follow-up questions are first rewritten into standalone queries by the LLM. Then hybrid search runs: vector similarity (pgvector) + full-text (`tsvector`), merged with reciprocal rank fusion; the candidates are reranked by a local cross-encoder (flashrank, ~4 MB ONNX model) and the top-5 win. Markdown documents are chunked along their headings; scanned PDFs go through OCR (RapidOCR) when no text layer is found.
 3. **Chat**: system prompt with the retrieved context + last 6 history messages + question → answer streamed from the selected model via Ollama's OpenAI-compatible API. Sources (file, chunk, snippet) are sent to the client before the answer and rendered as chips under each reply.
 
-## Tests
+## Tests & eval
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests\
+.\.venv\Scripts\python.exe -m pytest tests\     # unit tests (no DB/Ollama needed)
+.\.venv\Scripts\python.exe eval\run_eval.py     # answer-quality eval against the live API
 ```
 
-Covers text extraction for every format, the RRF merge logic, and API validation — no database or Ollama required.
+Unit tests cover text extraction for every format, the RRF merge logic, and API validation. The eval runs `eval/questions.json` through `/chat` and checks expected keywords — extend it with your own documents and questions. CI (GitHub Actions) runs pytest and the frontend build on every push.

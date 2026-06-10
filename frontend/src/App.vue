@@ -5,7 +5,10 @@ import {
   deleteDocument,
   getDocuments,
   getModels,
+  getConversationMessages,
   listConversations,
+  renameConversation,
+  suggestQuestions,
   uploadFile,
   uploadUrl,
 } from './api'
@@ -36,11 +39,62 @@ const backendDown = ref(false)
 
 const chats = ref([])
 const activeChatId = ref(null)
+const chatFilter = ref('')
+
+const filteredChats = computed(() => {
+  const q = chatFilter.value.trim().toLowerCase()
+  if (!q) return chats.value
+  return chats.value.filter((c) => c.title.toLowerCase().includes(q))
+})
+
+async function onRenameChat(chat) {
+  const title = window.prompt('Chat name:', chat.title)
+  if (!title?.trim() || title === chat.title) return
+  try {
+    await renameConversation(chat.id, title.trim())
+    await refreshChats()
+  } catch (e) {
+    uploadError.value = e.message
+  }
+}
+
+async function onExportChat(chat) {
+  try {
+    const msgs = await getConversationMessages(chat.id)
+    const md = [
+      `# ${chat.title}`,
+      '',
+      ...msgs.flatMap((m) => [
+        `**${m.role === 'user' ? 'You' : 'Assistant'}:**`,
+        '',
+        m.content,
+        '',
+      ]),
+    ].join('\n')
+    const blob = new Blob([md], { type: 'text/markdown' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `${chat.title.replace(/[^\w\s-]/g, '').slice(0, 40) || 'chat'}.md`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  } catch (e) {
+    uploadError.value = e.message
+  }
+}
 
 const fileInput = ref(null)
 const uploading = ref(false)
 const uploadMessage = ref(null)
 const uploadError = ref(null)
+const suggestions = ref([])
+
+async function loadSuggestions(docId) {
+  try {
+    suggestions.value = (await suggestQuestions(docId)).questions
+  } catch {
+    suggestions.value = []
+  }
+}
 
 const currentModel = computed(
   () => models.value.find((m) => m.name === selectedModel.value) ?? null,
@@ -91,16 +145,23 @@ async function refresh() {
 }
 
 async function onUpload() {
-  const file = fileInput.value?.files?.[0]
-  if (!file) return
+  const files = [...(fileInput.value?.files ?? [])]
+  if (!files.length) return
   uploading.value = true
   uploadMessage.value = null
   uploadError.value = null
+  let lastDocId = null
+  const done = []
   try {
-    const result = await uploadFile(file)
-    uploadMessage.value = `Ingested ${result.filename} (${result.chunks_count} chunks)`
+    for (const file of files) {
+      const result = await uploadFile(file)
+      done.push(`${result.filename} (${result.chunks_count})`)
+      lastDocId = result.doc_id
+      uploadMessage.value = `Ingested ${done.length}/${files.length}: ${done.join(', ')}`
+    }
     fileInput.value.value = ''
     await refresh()
+    if (lastDocId) loadSuggestions(lastDocId)
   } catch (e) {
     uploadError.value = e.message
   } finally {
@@ -121,6 +182,7 @@ async function onUploadUrl() {
     uploadMessage.value = `Ingested ${result.filename} (${result.chunks_count} chunks)`
     urlInput.value = ''
     await refresh()
+    loadSuggestions(result.doc_id)
   } catch (e) {
     uploadError.value = e.message
   } finally {
@@ -176,11 +238,12 @@ onMounted(refresh)
           <input
             ref="fileInput"
             type="file"
-            accept=".pdf,.txt,.xlsx,.xlsm"
+            multiple
+            accept=".pdf,.txt,.md,.csv,.docx,.xlsx,.xlsm,.html,.htm"
             :disabled="uploading"
             @change="onUpload"
           />
-          {{ uploading ? 'Ingesting…' : '＋ Upload PDF, DOCX, Excel, TXT…' }}
+          {{ uploading ? 'Ingesting…' : '＋ Upload documents' }}
         </label>
 
         <form class="url-form" @submit.prevent="onUploadUrl">
@@ -218,14 +281,25 @@ onMounted(refresh)
           <h2>Chats</h2>
           <button class="new-chat" @click="onNewChat">＋ New</button>
         </div>
+        <input
+          v-if="chats.length > 3"
+          v-model="chatFilter"
+          class="chat-search"
+          type="search"
+          placeholder="Search chats…"
+        />
         <ul class="chat-list">
           <li
-            v-for="c in chats"
+            v-for="c in filteredChats"
             :key="c.id"
             :class="{ active: c.id === activeChatId }"
             @click="activeChatId = c.id"
+            @dblclick="onRenameChat(c)"
           >
-            <span class="doc-name" :title="c.title">{{ c.title }}</span>
+            <span class="doc-name" :title="c.title + ' (double-click to rename)'">{{ c.title }}</span>
+            <button class="doc-delete" title="Export to Markdown" @click.stop="onExportChat(c)">
+              ⬇
+            </button>
             <button class="doc-delete" title="Delete chat" @click.stop="onDeleteChat(c.id)">
               🗑
             </button>
@@ -259,6 +333,7 @@ onMounted(refresh)
         :doc-ids="selectedDocIds.length ? selectedDocIds : null"
         :model="selectedModel"
         :conversation-id="activeChatId"
+        :suggestions="suggestions"
         @conversation-created="onConversationCreated"
       />
     </main>
@@ -419,6 +494,18 @@ onMounted(refresh)
 
 .new-chat:hover {
   background: var(--accent-soft);
+}
+
+.chat-search {
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  outline: none;
 }
 
 .chat-list {

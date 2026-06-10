@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     pg_conn: str = "postgresql+psycopg://rag:rag@localhost:5432/rag"
     collection_name: str = "rag_documents"
     uploads_path: str = "./uploads"
+    rerank: bool = True
+    watch_dir: str = ""
+    api_token: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

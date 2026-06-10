@@ -57,6 +57,35 @@ def _chunk_key(doc: Document) -> tuple:
     return (doc.metadata.get("doc_id"), doc.metadata.get("chunk_index"))
 
 
+@lru_cache(maxsize=1)
+def _get_ranker():
+    if not settings.rerank:
+        return None
+    try:
+        from flashrank import Ranker
+
+        return Ranker(model_name="ms-marco-TinyBERT-L-2-v2", cache_dir=".flashrank")
+    except Exception:
+        return None
+
+
+def _rerank(question: str, docs: list[Document]) -> list[Document]:
+    ranker = _get_ranker()
+    if ranker is None or len(docs) <= settings.top_k:
+        return docs[: settings.top_k]
+    from flashrank import RerankRequest
+
+    request = RerankRequest(
+        query=question,
+        passages=[{"id": i, "text": d.page_content} for i, d in enumerate(docs)],
+    )
+    try:
+        results = ranker.rerank(request)
+    except Exception:
+        return docs[: settings.top_k]
+    return [docs[r["id"]] for r in results[: settings.top_k]]
+
+
 def retrieve(question: str, doc_ids: list[str] | None = None) -> list[Document]:
     """Hybrid retrieval: vector + full-text, merged with reciprocal rank fusion."""
     pool = settings.top_k * 2
@@ -75,4 +104,5 @@ def retrieve(question: str, doc_ids: list[str] | None = None) -> list[Document]:
             scores[key] = scores.get(key, 0.0) + 1.0 / (60 + rank)
 
     ranked = sorted(scores, key=scores.get, reverse=True)
-    return [by_key[key] for key in ranked[: settings.top_k]]
+    candidates = [by_key[key] for key in ranked]
+    return _rerank(question, candidates)

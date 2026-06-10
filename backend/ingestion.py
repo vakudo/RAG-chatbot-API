@@ -6,7 +6,10 @@ from pathlib import Path
 import fitz
 from bs4 import BeautifulSoup
 from docx import Document as DocxDocument
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_text_splitters import (
+    MarkdownHeaderTextSplitter,
+    RecursiveCharacterTextSplitter,
+)
 from openpyxl import load_workbook
 
 from backend.config import settings
@@ -14,6 +17,10 @@ from backend.db import connect
 from backend.retriever import get_vectorstore
 
 _index_lock = threading.Lock()
+
+ALLOWED_EXTENSIONS = {
+    ".pdf", ".txt", ".md", ".csv", ".docx", ".xlsx", ".xlsm", ".html", ".htm",
+}
 
 
 def _index_path() -> Path:
@@ -100,11 +107,33 @@ def _extract_html(path: Path) -> str:
     return soup.get_text(separator="\n", strip=True)
 
 
+def _ocr_pdf(path: Path) -> str:
+    """Fallback for scanned PDFs with no text layer."""
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+    except ImportError:
+        return ""
+    ocr = RapidOCR()
+    pages = []
+    with fitz.open(path) as doc:
+        for page in doc:
+            png = page.get_pixmap(dpi=200).tobytes("png")
+            result, _ = ocr(png)
+            if result:
+                pages.append("\n".join(line[1] for line in result))
+    return "\n".join(pages)
+
+
 def extract_text(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix == ".pdf":
         with fitz.open(path) as doc:
-            return "\n".join(page.get_text() for page in doc)
+            text = "\n".join(page.get_text() for page in doc)
+        if len(text.strip()) < 50:
+            ocr_text = _ocr_pdf(path)
+            if ocr_text.strip():
+                return ocr_text
+        return text
     if suffix in {".xlsx", ".xlsm"}:
         return _extract_xlsx(path)
     if suffix == ".docx":
@@ -117,12 +146,28 @@ def extract_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="ignore")
 
 
-def ingest_file(path: Path, doc_id: str, filename: str) -> int:
-    text = extract_text(path)
+def split_text(text: str, suffix: str) -> list[str]:
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=settings.chunk_size, chunk_overlap=settings.chunk_overlap
     )
-    chunks = splitter.split_text(text)
+    if suffix != ".md":
+        return splitter.split_text(text)
+    # Markdown: split along headings first so chunks follow the document
+    # structure; each chunk is prefixed with its heading path for context.
+    header_splitter = MarkdownHeaderTextSplitter(
+        [("#", "h1"), ("##", "h2"), ("###", "h3")]
+    )
+    chunks = []
+    for section in header_splitter.split_text(text):
+        prefix = " / ".join(section.metadata.values())
+        for piece in splitter.split_text(section.page_content):
+            chunks.append(f"{prefix}\n{piece}" if prefix else piece)
+    return chunks or splitter.split_text(text)
+
+
+def ingest_file(path: Path, doc_id: str, filename: str) -> int:
+    text = extract_text(path)
+    chunks = split_text(text, path.suffix.lower())
     if not chunks:
         raise ValueError("No text could be extracted from the file")
 

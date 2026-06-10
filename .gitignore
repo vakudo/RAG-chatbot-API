@@ -9,3 +9,5 @@ node_modules/
 frontend/dist/
 backend.log
 backend.err.log
+.flashrank/
+.whisper/

@@ -54,6 +54,14 @@ def conversation_exists(cid: str) -> bool:
     return row is not None
 
 
+def rename_conversation(cid: str, title: str) -> bool:
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE conversations SET title = %s WHERE id = %s", (title[:120], cid)
+        )
+        return cur.rowcount > 0
+
+
 def delete_conversation(cid: str) -> bool:
     with connect() as conn:
         cur = conn.execute("DELETE FROM conversations WHERE id = %s", (cid,))
